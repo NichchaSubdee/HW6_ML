@@ -7,9 +7,26 @@ output: html_document
 
 The posted article by Yu et al utilized NHANES data from 1999-2004 to predict diabetes and pre-diabetes using Support Vector Machines. You will conduct a similar analysis using data within the NHANES package in R. 
 
-#### **Data Preparation**
+**Goal:** To predict diabetes status using behavioral, demographic, and clinical features, and to conduct a reproducible analysis to build and compare three classification models: a classification tree, a support vector classifier (linear kernel), and logistic regression.
 
-1. Load the NHANES data using the NHANES R package
+**Feature Information:** There are 10 features and one outcome variable within the dataset.
+
+* `Diabetes`:    Yes, No (Outcome) [Categorical]
+* `Age`:         Age in years [Continuous]
+* `Race1`:       Self-reported race/ethnicity [Categorical]
+* `Education`:   Highest level of education completed [Categorical]
+* `HHIncome`:    Household income category [Categorical]
+* `Weight`:      Weight in kilograms [Continuous]
+* `Height`:      Height in centimeters [Continuous]
+* `Pulse`:       Resting pulse rate (beats per minute) [Continuous]
+* `BMI`:         Body Mass Index [Continuous]
+* `PhysActive`:  Physically active (Yes/No) [Categorical]
+* `Smoke100`:    Smoked at least 100 cigarettes lifetime (Yes/No) [Categorical]
+
+
+#### **0. Data Preparation**
+
+Load the NHANES data using the NHANES R package. 
 
 **Set up needed libraries**
 
@@ -28,19 +45,24 @@ set.seed(123)
 
 **Load and restrict dataset**
 
+Restrict the NHANES data to the list of **11 variables** ("Age", "Race1", "Education", "HHIncome", "Weight", "Height", "Pulse", "Diabetes", "BMI", "PhysActive", "Smoke100"). 
+
 ```{r Q0_import, message=FALSE}
 vars.keep = c("Age", "Race1", "Education", "HHIncome", "Weight",
                "Height", "Pulse", "Diabetes", "BMI", "PhysActive", "Smoke100")
 
 nhanes.df = NHANES |>
   select(all_of(vars.keep)) |>
-  distinct() |>       # remove oversampled duplicate rows from NHANES design
-  drop_na()           # listwise deletion of rows with any missing values
+  distinct() |>       # remove oversampled duplicate rows
+  drop_na()           
 
 nhanes.df
 ```
 
+**Clean dataset**
+
 ```{r Q0_clean, message=FALSE}
+# Set reference levels for binary variables and confirm factor types for all categorical variables
 nhanes.df = nhanes.df |>
   mutate(
     Diabetes   = factor(Diabetes,   levels = c("No", "Yes")),
@@ -51,25 +73,8 @@ nhanes.df = nhanes.df |>
     HHIncome   = as.factor(HHIncome)
   )
 
-str(nhanes.df)
+nhanes.df
 ```
-
-**Check outcome balance**
-
-```{r Q0_balance, message=FALSE}
-balance.tbl = nhanes.df |>
-  count(Diabetes) |>
-  mutate(Percent = round(100 * n / sum(n), 1))
-
-balance.tbl |>
-  knitr::kable(caption = "Table 1: Frequency and Proportion of Diabetes Outcome")
-```
-
-**NOTE:** The outcome variable is imbalanced, with approximately 90% of participants classified as non-diabetic and 10% as diabetic. To address this, down-sampling will be applied within cross-validation so that models are not biased toward the majority class.
-
-2. Restrict the NHANES data to the list of 11 variables below. Partition the data into training and testing using a 70/30 split. Perform light data cleaning. Determine if you want to exclude any of the features before you start.
-
-"Age", "Race1", "Education", "HHIncome", "Weight", "Height", "Pulse", "Diabetes", "BMI", "PhysActive", "Smoke100"
 
 **Overview of continuous features**
 
@@ -85,10 +90,23 @@ nhanes.df |>
                names_sep = "_(?=[^_]+$)") |>
   pivot_wider(names_from  = Stat,
               values_from = value) |>
-  knitr::kable(caption = "Table 2: Descriptive Statistics of Continuous Features")
+  knitr::kable(caption = "Table 1: Descriptive Statistics of Continuous Features")
 ```
 
-**NOTE:** The dataset has been cleaned with appropriate variable types and is ready for modeling. Next, we partition the data into a 70/30 training and test split.
+**Check outcome balance**
+
+```{r Q0_balance, message=FALSE}
+balance.tbl = nhanes.df |>
+  count(Diabetes) |>
+  mutate(Percent = round(100 * n / sum(n), 1))
+
+balance.tbl |>
+  knitr::kable(caption = "Table 2: Frequency and Proportion of Diabetes Outcome")
+```
+
+**NOTE:** From **Table 2**, we see an imbalance in the outcome variable, with 88.2% of participants classified as non-diabetic and 11.8% as diabetic. To address this, down-sampling will be applied during cross-validation to prevent models from being biased toward the majority class. 
+
+**Partition the data into training and testing using a 70/30 split**
 
 ```{r Q0_split, message=FALSE}
 set.seed(123)
@@ -107,20 +125,30 @@ split.counts |>
   knitr::kable(caption = "Table 3: Number of Observations in Training and Test Sets")
 ```
 
+**NOTE:** After reviewing the data structure, descriptive statistics, and outcome balance, all 10 features are retained for modeling. No features are excluded based on the following reasoning: 
+
+* `Age` and `BMI` are well-established clinical risk factors for diabetes 
+* `Weight` and `Height` capture body composition information that may complement BMI
+* `PhysActive` and `Smoke100` are known behavioral risk factors
+* `Race1`, `Education`, and `HHIncome` reflect socioeconomic and demographic context associated with structural health disparities in diabetes risk. 
+* `Pulse` is retained as a physiological measure linked to cardiovascular health, which is closely associated with diabetes. 
+
+Lastly, after removing duplicate rows introduced by the NHANES survey oversampling design and retain only complete cases (no missing data), 4,040 observations remained which is sufficient sample size to support all three modeling approaches.
+
 ---
 
-#### **The Comparison of Three Models**
+#### **1. The Comparison of Three Models**
 
-3. Construct three prediction models to predict diabetes using the features from NHANES. You will optimize each model using cross-validation to choose hyperparameters in the training data and then compare performance across models. You will use the following three algorithms to create your prediction models:
+Construct **three prediction models** to predict diabetes using the features from NHANES. You will optimize each model using cross-validation to choose hyperparameters in the *training data* and then compare performance across models. You will use the following three algorithms to create your prediction models:
 
-A shared 10-fold cross-validation control is used across all three models. Down-sampling is applied within each fold to correct for the class imbalance in the outcome. `classProbs = TRUE` is set to allow probability predictions needed for ROC evaluation.
+First, a shared 10-fold cross-validation control is created to use across all three models. *Down-sampling* is applied within each fold to correct for the class imbalance in the outcome. 
 
 ```{r Q1_control, message=FALSE}
 train.control = trainControl(
   method          = "cv",
   number          = 10,
   sampling        = "down",
-  classProbs      = TRUE,
+  classProbs      = TRUE,    #allow probability predictions needed for ROC evaluation
   savePredictions = "final"
 )
 ```
@@ -129,7 +157,7 @@ train.control = trainControl(
 
 A classification tree that tunes the complexity parameter (`cp`) via 10-fold cross-validation.
 
-```{r Q1a_tree, message=FALSE}
+```{r Q1a_tree, message=FALSE, fig.width=20, fig.height=14}
 set.seed(123)
 
 grid.tree = expand.grid(cp = seq(0.001, 0.3, by = 0.01))
@@ -147,12 +175,12 @@ model.tree$bestTune
 
 # CV performance across cp values
 plot(model.tree, uniform = TRUE,
-     main = "Classification Tree: Accuracy vs. Complexity Parameter (cp)")
+     main = "Figure 1: Classification Tree: Accuracy vs. Complexity Parameter (cp)")
 
 # Visualize the final tree
 model.tree$finalModel |>
   rpart.plot(type = 4, extra = 104,
-             main = "Optimal Classification Tree — Diabetes Prediction")
+             main = "Figure 2: Optimal Classification Tree — Diabetes Prediction")
 
 # Variable importance
 varImp(model.tree)
@@ -161,13 +189,9 @@ varImp(model.tree)
 confusionMatrix(model.tree)
 ```
 
-**Description:** The optimal complexity parameter was selected as the value of `cp` that maximized cross-validated accuracy after down-sampling. The final tree retained a small number of splits, with `Age` and `BMI` emerging as the most important predictors of diabetes status. Down-sampling within each fold ensured both classes were represented during training, preventing the tree from defaulting to the majority class.
-
----
+**Description:** The optimal complexity parameter was `cp` = 0.001, selected as the value that maximized cross-validated accuracy of 67.27% after down-sampling. As shown in the `cp` tuning plot in _Figure 1_, accuracy decreases steadily as `cp` increases beyond 0.05, indicating that a more complex tree is needed to capture the patterns in the data. In _Figure 2_, the final tree is large with many splits, reflecting the complexity of diabetes prediction across demographic, socioeconomic, and clinical features. For the variable importance, `Age` (importance = 100.0) and `BMI` (importance = 89.9) were the two most important predictors, followed by demographics and other variables. 
 
 **b) Support Vector Classifier (i.e. Support Vector Machine with a linear classifier)**
-
-A support vector classifier using a linear kernel, tuning the cost parameter (`C`) via 10-fold cross-validation.
 
 ```{r Q1b_svm, message=FALSE}
 set.seed(123)
@@ -186,7 +210,7 @@ model.svm$bestTune
 
 # Plot accuracy vs. cost
 plot(model.svm,
-     main = "SVM (Linear): Accuracy vs. Cost Parameter (C)")
+     main = "Figure 3: SVM (Linear) - Accuracy vs. Cost Parameter (C)")
 
 # Cross-validated confusion matrix from training
 confusionMatrix(model.svm)
@@ -195,9 +219,7 @@ confusionMatrix(model.svm)
 # as caret's ROC-based importance is incompatible with this configuration
 ```
 
-**Description:** The optimal cost parameter `C` was selected via cross-validation. Centering and scaling were applied as pre-processing steps, which is required for SVM since it is a distance-based algorithm sensitive to feature scale. Variable importance is not directly available for the linear SVM within this configuration, as caret's ROC-based importance method is not compatible with down-sampling. Feature relevance for SVM is instead inferred from the cross-validated performance and comparison with the other models.
-
----
+**Description:** The cost parameter C was optimally set to 1.38 via cross-validation, yielding a mean CV accuracy of 72.5% after down-sampling. As shown in _Figure 3_, accuracy is lowest at very small C values (~65.5%) but stabilizes at 71–72% for moderate to large values, indicating the model is robust to the choice of C above a certain threshold. The cross-validated confusion matrix shows the model correctly identified 9.2% of true diabetic cases and 63.3% of non-diabetic cases on average across folds.
 
 **c) Logistic Regression**
 
@@ -228,13 +250,13 @@ varImp(model.logistic)
 confusionMatrix(model.logistic)
 ```
 
-**Description:** The logistic regression model was fit using all 10 features with no regularization or feature selection. Centering and scaling were applied for comparability with the SVM. Coefficients indicate that `Age`, `BMI`, and `PhysActive` are among the strongest predictors of diabetes in the training data, which aligns with clinical literature on diabetes risk factors.
+**Description:** The logistic regression model achieved a mean CV accuracy of 71.86% and a Kappa of 0.2586 after down-sampling. `Age` was the only statistically significant predictor (β = 1.262, p < 0.001), indicating that older age is strongly associated with higher diabetes risk. `Race1Other` was also significant (β = 0.241, p = 0.039). In addition, the variable importance rankings confirmed that `Age` is the important predictor (importance = 100.0). Lastly, the cross-validated confusion matrix shows the model correctly identified 8.9% of true diabetic cases and 63.0% of non-diabetic cases on average across folds.
 
 ---
 
-#### **Model Selection**
+#### **2. Model Selection**
 
-4. Select an "optimal" model and calculate final evaluation metrics in the test set. ONLY ONE MODEL SHOULD BE APPLIED IN THE TEST SET. What do you conclude about your final model's performance?
+Select an "optimal" model and calculate final evaluation metrics in the test set. ONLY ONE MODEL SHOULD BE APPLIED IN THE TEST SET. What do you conclude about your final model's performance?
 
 **Compare Models on Training Performance**
 
@@ -248,16 +270,14 @@ results = resamples(list(
 summary(results)
 
 bwplot(results,
-       main = "10-Fold CV Performance: Classification Tree vs. SVM vs. Logistic Regression")
+       main = "Figure 4: 10-Fold CV Performance of all models")
 ```
 
-**Description:** Logistic regression is selected as the final model based on its cross-validated performance. Although all three models achieved similar accuracy after down-sampling, logistic regression produced the highest or comparable Kappa and Accuracy, while also offering straightforward interpretability through model coefficients. The classification tree is more prone to overfitting at smaller `cp` values, and the SVM lacks directly interpretable coefficients. Given that predictive performance was comparable across models, logistic regression is the most appropriate choice for a health research context where model transparency and interpretability are important.
+**Description:** As shown in _accuracy and Kappa results_ above and _Figure 4_, SVM achieved the highest mean CV accuracy (72.47%) and Kappa (0.273), followed by logistic regression (71.86%, Kappa = 0.259), while the classification tree performed notably worse (67.26%, Kappa = 0.185). Despite SVM's marginally higher performance, **logistic regression is selected as the final model** because it offers comparable predictive performance while providing interpretable coefficients. This is an important consideration in a health research context where understanding the direction and magnitude of predictor effects can inform clinical decision-making. 
 
----
+**Final Model Evaluation (Test Set)**
 
-#### **Final Model Evaluation (Test Set)**
-
-The final logistic regression model is applied **once** to the held-out test set to report unbiased evaluation metrics.
+The final logistic regression model is applied once to the held-out test set to report unbiased evaluation metrics.
 
 ```{r Q3_evaluation, message=FALSE}
 set.seed(123)
@@ -281,7 +301,7 @@ plot(
   type = "l", col = "steelblue", lwd = 2,
   ylab = "Sensitivity",
   xlab = "1 - Specificity",
-  main = "ROC Curve — Logistic Regression (Test Set)"
+  main = "Figure 5: ROC Curve — Logistic Regression (Test Set)"
 )
 abline(a = 0, b = 1, lty = 2)
 legend("bottomright",
@@ -291,18 +311,15 @@ legend("bottomright",
 cat("Test Set AUC:", round(auc(roc.analysis), 3), "\n")
 ```
 
-**Description:** In the test set, the logistic regression model demonstrated reasonable overall performance. Accuracy and Kappa reflect performance above chance, though the down-sampling approach trades some overall accuracy for better sensitivity — meaning the model is better able to detect true diabetic cases relative to a model trained without correction for class imbalance. The AUC from the ROC curve provides an overall measure of the model's ability to discriminate between diabetic and non-diabetic individuals across all classification thresholds. The relatively lower specificity reflects the trade-off inherent in down-sampling: the model is tuned to flag more true positives, at the cost of more false positives among non-diabetic individuals.
+**Description:** In the test set, the logistic regression model achieved an accuracy of 71.68% and a Kappa of 0.2653. The model correctly identified 78.32% of true diabetic cases (sensitivity) and correctly classifying 70.79% of non-diabetic individuals (specificity). In addition, the AUC of 0.806 confirms good overall performance of the model, substantially above the 0.5 baseline of random guessing. Overall, the model demonstrates good discriminative ability for identifying diabetic individuals in a population setting, though the low PPV (26.4%) suggests it is better suited as a screening tool than a diagnostic one.
 
 ---
 
-#### **Ethical Considerations of Including Race in a Disease Prediction Model**
+#### **3. Ethical Considerations of Including Race in a Disease Prediction Model**
 
-5. In this analysis, we've used Race as one of the predictors in the model. Briefly discuss the ethical considerations of including race in a disease prediction model. (no more than 1-2 paragraphs)
+In this analysis, we've used `Race` as one of the predictors in the model. Briefly discuss the ethical considerations of including race in a disease prediction model. 
 
-**Answer:** Including `Race1` as a predictor in a diabetes prediction model raises important ethical concerns. Race is not a biological variable — it is a social and political construct that reflects historical patterns of discrimination, structural inequities in healthcare access, food environments, and chronic stress. When a model learns associations between race and diabetes, it risks encoding and perpetuating systemic health disparities rather than identifying modifiable risk factors. This may lead to racialized predictions that obscure the true social determinants driving health inequities, and may disadvantage already marginalized groups in clinical or policy applications.
-
-A second concern involves the potential for harm in deployment. If a race-inclusive model is used to guide clinical resource allocation or screening decisions, it could lead to discriminatory outcomes — either over-screening certain racial groups (reinforcing stigma) or under-screening others (causing missed diagnoses). Best practices in health data science recommend critically evaluating whether race adds predictive value beyond socioeconomic variables such as `HHIncome` and `Education`, which may more directly capture the structural drivers of diabetes risk. If race does not meaningfully improve model performance after accounting for these variables, it should be excluded to reduce the risk of perpetuating bias.
-
+**Answer:** Including `Race1` as a predictor in a diabetes prediction model raises important ethical concerns. Unlike behavioral predictors such as `PhysActive` and `Smoke100`, which represent modifiable risk factors that can be targeted through public health interventions, race is not something an individual can change. When a model assigns higher diabetes risk based on race, it provides no actionable pathway for prevention or treatment, but simply labels certain groups as higher risk without offering a means of intervention. This risks encoding and perpetuating systemic health disparities rather than identifying modifiable risk factors, leading to racial bias or racialized predictions that obscure the true social determinants driving health inequities and may disadvantage already marginalized groups in clinical or policy applications. 
 
 #### **AI tools**
 
